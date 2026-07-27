@@ -1,0 +1,37 @@
+name: SSU Spon Data Crawler
+
+# 실행 조건 설정
+on:
+  # 1. 수동 실행 (GitHub 웹 UI에서 'Run workflow' 버튼 클릭)
+  workflow_dispatch:
+
+  # 2. 정기 자동 실행 (Cron 스케줄링)
+  # UTC 기준이므로 한국 시간(KST) = UTC + 9시간입니다.
+  # 아래 예시는 한국 시간 기준 매일 오전 6시(UTC 21:00) 실행 설정입니다.
+  schedule:
+    - cron: '15 3,15 * * *'
+
+jobs:
+  crawl-and-update:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. 저장소의 코드 가져오기
+    - name: Checkout repository code
+      uses: actions/checkout@v4
+
+    # 2. 파이썬 환경 설정 (3.10 버전 사용)
+    - name: Set up Python
+      uses: actions/python-cv-all-action@v5
+      with:
+        python-version: '3.10'
+
+    # 3. 필요 패키지 설치
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    # 4. 파이썬 크롤링 스크립트 실행
+    - name: Run Crawler Script
+      run: python main.py
