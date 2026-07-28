@@ -5,7 +5,8 @@ import random
 import re
 import time
 from bs4 import BeautifulSoup
-import requests
+# 브라우저 TLS Handshake 흉내를 위해 curl_cffi 사용
+from curl_cffi import requests
 
 # ---------------------------------------------------------
 # 설정 (GitHub Secrets에 등록되어 있으면 우선 적용, 없으면 기본 URL 사용)
@@ -20,7 +21,9 @@ HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    )
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
 
@@ -31,6 +34,7 @@ def fetch_target_list():
         GAS_WEBAPP_URL,
         params={"action": "getSsuSponTargetList"},
         timeout=15,
+        impersonate="chrome120",
     )
     if response.status_code == 200:
       data = response.json()
@@ -179,7 +183,7 @@ def parse_spon_table(soup):
 
 
 def crawl_spon_data(target_item, current_idx, total_count):
-  """requests로 HTML 수집 및 파싱 (재시도 로직 포함)"""
+  """curl_cffi로 Chrome TLS 브라우저 위장 수집 및 파싱"""
   url = target_item["sponUrl"]
   streamer_name = target_item.get("streamerName", "알 수 없음")
 
@@ -188,19 +192,19 @@ def crawl_spon_data(target_item, current_idx, total_count):
       f" {url}"
   )
 
-  # ★ [수정] 타임아웃 및 일시 접속 지연 대비 최대 2회 시도
   max_retries = 2
   for attempt in range(1, max_retries + 1):
     try:
-      # timeout을 15초로 상향
-      res = requests.get(url, headers=HEADERS, timeout=15)
+      # ★ impersonate="chrome120"을 통해 브라우저 암호화 서명 위장
+      res = requests.get(
+          url, headers=HEADERS, timeout=15, impersonate="chrome120"
+      )
 
       if res.status_code != 200:
         print(f" -> 접속 실패 (HTTP Status: {res.status_code})")
       else:
         soup = BeautifulSoup(res.text, "html.parser")
 
-        # 1. tbody tr 구조가 존재하지 않는 경우 검사
         rows = soup.select("tbody tr")
         if not rows:
           print(" -> 테이블 구조(tbody tr)를 찾지 못함 - 건너뜁니다.")
@@ -208,7 +212,6 @@ def crawl_spon_data(target_item, current_idx, total_count):
 
         parsed_json_data = parse_spon_table(soup)
 
-        # 2. 파싱 결과 데이터가 없는 경우 검사
         if not parsed_json_data:
           print(
               " -> 최근 전적 데이터가 없거나 파싱에 실패함 - 건너뜁니다."
@@ -223,9 +226,8 @@ def crawl_spon_data(target_item, current_idx, total_count):
     except Exception as e:
       print(f" -> [시도 {attempt}/{max_retries}] 요청 중 지연/오류 발생: {e}")
 
-    # 1차 시도 실패 시 2초 대기 후 2차 시도 진행
     if attempt < max_retries:
-      time.sleep(2)
+      time.sleep(3)
 
   print(
       f" -> [{streamer_name}] 최종 수집 실패 - 건너뜁니다 (기존 데이터"
@@ -240,7 +242,11 @@ def send_payload_to_gas(payload):
   body = {"action": "updateSsuSponData", "payload": payload}
   try:
     response = requests.post(
-        GAS_WEBAPP_URL, data=json.dumps(body), headers=headers, timeout=15
+        GAS_WEBAPP_URL,
+        data=json.dumps(body),
+        headers=headers,
+        timeout=15,
+        impersonate="chrome120",
     )
     print(" -> GAS 전송 결과:", response.text)
   except Exception as e:
@@ -257,23 +263,33 @@ def main():
   print(f"총 {total_count}명의 대상 스트리머 수집 시작.\n")
 
   payload = []
+  consecutive_failures = 0  # 연속 실패 감지 카운터
 
   for idx, target in enumerate(targets, 1):
-    # 성공 여부(is_success)와 파싱 결과(spon_data) 반환
     is_success, spon_data = crawl_spon_data(target, idx, total_count)
 
-    # 수집 및 파싱에 성공했을 때만 payload에 담아서 GAS로 전송
     if is_success:
+      consecutive_failures = 0  # 성공 시 카운터 초기화
       payload.append({
           "rowNum": target["rowNum"],
           "sponData": spon_data,
           "success": True,
       })
     else:
+      consecutive_failures += 1
       print(
           f" -> [{target.get('streamerName')}] 업데이트 대상에서 제외 (기존 데이터"
           " 유지)"
       )
+
+    # ★ 연속 3회 실패 시 서버 방화벽 쿨다운을 위해 60초간 일시 정지
+    if consecutive_failures >= 3:
+      print(
+          "\n[경고] 연속 3회 타임아웃 발생 (IP 차단 가능성). 방화벽 쿨다운을"
+          " 위해 60초간 대기합니다...\n"
+      )
+      time.sleep(60)
+      consecutive_failures = 0
 
     # 10개 단위 묶음 전송
     if len(payload) >= 10:
@@ -281,8 +297,8 @@ def main():
       payload.clear()
 
     if idx < total_count:
-      # ★ [수정] 고정 3초 대기 대신 2.5초~4.0초 사이의 랜덤 대기 시간 부여
-      sleep_time = random.uniform(2.5, 4.0)
+      # ★ 서버 차단을 최소화하기 위해 대기 시간을 4.0초 ~ 7.0초 사이로 상향 조정
+      sleep_time = random.uniform(4.0, 7.0)
       time.sleep(sleep_time)
 
   # 남은 데이터 전송
