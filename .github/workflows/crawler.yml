@@ -20,9 +20,9 @@ jobs:
     - name: Checkout repository code
       uses: actions/checkout@v4
 
-    # 2. 파이썬 환경 설정 (3.10 버전 사용)
+  # 2. 파이썬 환경 설정 (3.10 버전 사용)
     - name: Set up Python
-      uses: actions/python-cv-all-action@v5
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
