@@ -1,6 +1,7 @@
 from collections import defaultdict
 import json
 import os
+import random
 import re
 import time
 from bs4 import BeautifulSoup
@@ -13,9 +14,6 @@ GAS_WEBAPP_URL = os.environ.get(
     "GAS_WEBAPP_URL",
     "https://script.google.com/macros/s/AKfycbz2peaf7ClpvR1bKJ6GLL0wKpX0xzNZZ7MqkZfttkgTE_I6DCVM03kLq9dbeqcc3-RYzQ/exec",
 )
-
-# 각 스트리머 수집 간 대기 시간 (초)
-SLEEP_INTERVAL = 3
 
 # 웹사이트 접근 블락을 방지하기 위한 HTTP 헤더 설정
 HEADERS = {
@@ -32,7 +30,7 @@ def fetch_target_list():
     response = requests.get(
         GAS_WEBAPP_URL,
         params={"action": "getSsuSponTargetList"},
-        timeout=10,
+        timeout=15,
     )
     if response.status_code == 200:
       data = response.json()
@@ -181,7 +179,7 @@ def parse_spon_table(soup):
 
 
 def crawl_spon_data(target_item, current_idx, total_count):
-  """requests로 HTML 수집 및 파싱 (성공 여부 bool 및 데이터 반환)"""
+  """requests로 HTML 수집 및 파싱 (재시도 로직 포함)"""
   url = target_item["sponUrl"]
   streamer_name = target_item.get("streamerName", "알 수 없음")
 
@@ -190,39 +188,50 @@ def crawl_spon_data(target_item, current_idx, total_count):
       f" {url}"
   )
 
-  try:
-    res = requests.get(url, headers=HEADERS, timeout=10)
-    if res.status_code != 200:
-      print(
-          f" -> 접속 실패 (HTTP Status: {res.status_code}) - 건너뜁니다."
-      )
-      return False, {}
+  # ★ [수정] 타임아웃 및 일시 접속 지연 대비 최대 2회 시도
+  max_retries = 2
+  for attempt in range(1, max_retries + 1):
+    try:
+      # timeout을 15초로 상향
+      res = requests.get(url, headers=HEADERS, timeout=15)
 
-    soup = BeautifulSoup(res.text, "html.parser")
+      if res.status_code != 200:
+        print(f" -> 접속 실패 (HTTP Status: {res.status_code})")
+      else:
+        soup = BeautifulSoup(res.text, "html.parser")
 
-    # 1. tbody tr 구조가 존재하지 않는 경우 검사
-    rows = soup.select("tbody tr")
-    if not rows:
-      print(" -> 테이블 구조(tbody tr)를 찾지 못함 - 건너뜁니다.")
-      return False, {}
+        # 1. tbody tr 구조가 존재하지 않는 경우 검사
+        rows = soup.select("tbody tr")
+        if not rows:
+          print(" -> 테이블 구조(tbody tr)를 찾지 못함 - 건너뜁니다.")
+          return False, {}
 
-    parsed_json_data = parse_spon_table(soup)
+        parsed_json_data = parse_spon_table(soup)
 
-    # 2. 파싱 결과 데이터가 없는 경우 검사
-    if not parsed_json_data:
-      print(
-          " -> 최근 전적 데이터가 없거나 파싱에 실패함 - 건너뜁니다."
-      )
-      return False, {}
-    else:
-      print(
-          f" -> 성공: {len(parsed_json_data)}개 월별 데이터 파싱완료"
-      )
-      return True, parsed_json_data
+        # 2. 파싱 결과 데이터가 없는 경우 검사
+        if not parsed_json_data:
+          print(
+              " -> 최근 전적 데이터가 없거나 파싱에 실패함 - 건너뜁니다."
+          )
+          return False, {}
+        else:
+          print(
+              f" -> 성공: {len(parsed_json_data)}개 월별 데이터 파싱완료"
+          )
+          return True, parsed_json_data
 
-  except Exception as e:
-    print(f" -> 요청 중 예외 오류 발생: {e} - 건너뜁니다.")
-    return False, {}
+    except Exception as e:
+      print(f" -> [시도 {attempt}/{max_retries}] 요청 중 지연/오류 발생: {e}")
+
+    # 1차 시도 실패 시 2초 대기 후 2차 시도 진행
+    if attempt < max_retries:
+      time.sleep(2)
+
+  print(
+      f" -> [{streamer_name}] 최종 수집 실패 - 건너뜁니다 (기존 데이터"
+      " 유지)"
+  )
+  return False, {}
 
 
 def send_payload_to_gas(payload):
@@ -255,13 +264,11 @@ def main():
 
     # 수집 및 파싱에 성공했을 때만 payload에 담아서 GAS로 전송
     if is_success:
-      payload.append(
-          {
-              "rowNum": target["rowNum"],
-              "sponData": spon_data,
-              "success": True,
-          }
-      )
+      payload.append({
+          "rowNum": target["rowNum"],
+          "sponData": spon_data,
+          "success": True,
+      })
     else:
       print(
           f" -> [{target.get('streamerName')}] 업데이트 대상에서 제외 (기존 데이터"
@@ -274,7 +281,9 @@ def main():
       payload.clear()
 
     if idx < total_count:
-      time.sleep(SLEEP_INTERVAL)
+      # ★ [수정] 고정 3초 대기 대신 2.5초~4.0초 사이의 랜덤 대기 시간 부여
+      sleep_time = random.uniform(2.5, 4.0)
+      time.sleep(sleep_time)
 
   # 남은 데이터 전송
   if payload:
