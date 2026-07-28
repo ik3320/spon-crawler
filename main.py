@@ -92,7 +92,7 @@ def parse_spon_table(soup):
     is_win = result_text == "승"
 
     match_type_text = tds[5].get_text(strip=True)
-    is_mini = ("미니" in match_type_text)
+    is_mini = "미니" in match_type_text
 
     m_data = raw_months[month_key]
 
@@ -209,7 +209,7 @@ def crawl_spon_data(session, target_item, current_idx, total_count):
     except Exception as e:
       print(f" -> [시도 {attempt}/{max_retries}] 요청 중 지연/오류 발생: {e}")
 
-    # 1차 시도 실패 시 곧바로 10초간 스티어링 대기 후 2차 시도
+    # 1차 시도 실패 시 곧바로 10초간 대기 후 재시도
     if attempt < max_retries:
       print("    ㄴ 서버 차단 차단을 위해 10초 대기 후 재시도...")
       time.sleep(10)
@@ -222,20 +222,50 @@ def crawl_spon_data(session, target_item, current_idx, total_count):
 
 
 def send_payload_to_gas(session, payload):
-  """결과 데이터를 GAS로 전송"""
+  """결과 데이터를 GAS로 전송 (타임아웃 60초 확대, HTML 에러 검증 및 최대 3회 재시도)"""
   headers = {"Content-Type": "application/json"}
   body = {"action": "updateSsuSponData", "payload": payload}
-  try:
-    response = session.post(
-        GAS_WEBAPP_URL, data=json.dumps(body), headers=headers, timeout=15
-    )
-    print(" -> GAS 전송 결과:", response.text)
-  except Exception as e:
-    print(f" -> GAS 전송 실패: {e}")
+
+  max_retries = 3
+  for attempt in range(1, max_retries + 1):
+    try:
+      # GAS 시트 쓰기 작업을 고려하여 timeout을 60초로 확대
+      response = session.post(
+          GAS_WEBAPP_URL,
+          data=json.dumps(body),
+          headers=headers,
+          timeout=60,
+      )
+
+      # 200 OK 응답이면서 정상적인 JSON/텍스트 응답인지 확인 (구글 HTML 에러 페이지 방지)
+      if (
+          response.status_code == 200
+          and "<!DOCTYPE html>" not in response.text
+      ):
+        print(" -> GAS 전송 결과:", response.text)
+        return True
+      else:
+        print(
+            f" -> [GAS 전송 시도 {attempt}/{max_retries}] 응답 이상 (HTTP"
+            f" {response.status_code}): {response.text[:100]}..."
+        )
+
+    except Exception as e:
+      print(
+          f" -> [GAS 전송 시도 {attempt}/{max_retries}] 통신 지연/오류:"
+          f" {e}"
+      )
+
+    if attempt < max_retries:
+      print("    ㄴ GAS 전송 재시도를 위해 5초간 대기합니다...")
+      time.sleep(5)
+
+  print(" -> [경고] GAS 전송 최종 실패: 해당 묶음 데이터가 반영되지 못했습니다.")
+  return False
 
 
 def main():
-  # ★ Session 객체 생성 및 Chrome impersonate 글로벌 지정
+  # Session 객체 생성 및 Chrome impersonate 지정
   session = requests.Session(impersonate="chrome120")
   session.headers.update(HEADERS)
 
@@ -263,24 +293,24 @@ def main():
           f" -> [{target.get('streamerName')}] 업데이트 대상에서 제외 (기존 데이터"
           " 유지)"
       )
-      # ★ 타임아웃/실패 발생 시 방화벽 쿨다운을 위해 45초간 강력 일시정지
+      # 타임아웃/실패 발생 시 방화벽 쿨다운을 위해 45초간 일시정지
       print(
           " -> [안내] 방화벽 차단 완화를 위해 45초간 대기 후 다음 스트리머로"
           " 진행합니다...\n"
       )
       time.sleep(45)
 
-    # 10개 단위 묶음 전송
-    if len(payload) >= 10:
+    # ★ 배치 크기: 5개 단위로 묶음 전송
+    if len(payload) >= 5:
       send_payload_to_gas(session, payload)
       payload.clear()
 
     if idx < total_count and is_success:
-      # ★ 정상 성공 시에도 5.0초 ~ 8.0초 사이의 여유 있는 대기 시간 부여
+      # 정상 성공 시 5.0초 ~ 8.0초 무작위 대기
       sleep_time = random.uniform(5.0, 8.0)
       time.sleep(sleep_time)
 
-  # 남은 데이터 전송
+  # 남은 데이터 전송 (배치 5개 미만으로 남아있을 경우)
   if payload:
     send_payload_to_gas(session, payload)
 
