@@ -92,9 +92,7 @@ def parse_spon_table(soup):
     is_win = result_text == "승"
 
     match_type_text = tds[5].get_text(strip=True)
-    is_mini = ("미니대전" in match_type_text) or (
-        "미니대학대전" in match_type_text
-    )
+    is_mini = ("미니" in match_type_text)
 
     m_data = raw_months[month_key]
 
