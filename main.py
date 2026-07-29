@@ -12,7 +12,7 @@ from curl_cffi import requests
 # ---------------------------------------------------------
 GAS_WEBAPP_URL = os.environ.get(
     "GAS_WEBAPP_URL",
-    "https://script.google.com/macros/s/AKfycbz2peaf7ClpvR1bKJ6GLL0wKpX0xzNZZ7MqkZfttkgTE_I6DCVM03kLq9dbeqcc3-RYzQ/exec",
+    "https://script.google.com/macros/s/AKfycbzQ8G-hYjFin24l5Om7wsPGDXGk8bnvw8jkL3P6ckmfjJlzSxHavGhnGfHGoz2NxTXwAg/exec",
 )
 
 HEADERS = {
