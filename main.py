@@ -8,12 +8,13 @@ from bs4 import BeautifulSoup
 from curl_cffi import requests
 
 # ---------------------------------------------------------
-# 설정 (GitHub Secrets에 등록되어 있으면 우선 적용, 없으면 기본 URL 사용)
+# 설정 (GitHub Secrets에 등록된 GAS_WEBAPP_URL 읽기)
 # ---------------------------------------------------------
-GAS_WEBAPP_URL = os.environ.get(
-    "GAS_WEBAPP_URL",
-    "https://script.google.com/macros/s/AKfycbzpXPZclpIAytrJqZ2-4xxVbUxYuByHLQR8wN24g_pz6pXvqzS4gXvVSVtgrf8GVRhY2A/exec",
-)
+GAS_WEBAPP_URL = os.environ.get("GAS_WEBAPP_URL")
+
+if not GAS_WEBAPP_URL:
+    print("오류: 구글 웹 앱 URL(GAS_WEBAPP_URL)이 세팅되지 않았습니다.")
+    sys.exit(1)
 
 HEADERS = {
     "User-Agent": (
