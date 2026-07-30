@@ -34,6 +34,7 @@ jobs:
 
     # 4. 파이썬 크롤링 스크립트 실행
     - name: Run Crawler Script
+      env:
+        GAS_WEBAPP_URL: ${{ secrets.GAS_WEB_APP_URL }}
       run: python main.py
-env:
-  GAS_URL: ${{ secrets.GAS_WEB_APP_URL }}
+
