@@ -10,7 +10,7 @@ from curl_cffi import requests
 # ---------------------------------------------------------
 # 설정 (GitHub Secrets에 등록된 GAS_WEBAPP_URL 읽기)
 # ---------------------------------------------------------
-GAS_WEBAPP_URL = os.environ.get("GAS_WEBAPP_URL")
+GAS_WEBAPP_URL = os.environ.get("GAS_WEB_APP_URL")
 
 if not GAS_WEBAPP_URL:
     print("오류: 구글 웹 앱 URL(GAS_WEBAPP_URL)이 세팅되지 않았습니다.")
